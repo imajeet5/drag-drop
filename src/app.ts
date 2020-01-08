@@ -59,7 +59,7 @@ function validate(args: Validatable) {
 //autoBind decorator
 function autoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
   const originalMethod = descriptor.value;
-  console.log(descriptor);
+  // console.log(descriptor);
   const adjDescriptor: PropertyDescriptor = {
     configurable: true,
     get() {
@@ -70,11 +70,52 @@ function autoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
   return adjDescriptor;
 }
 
+// Project State Management, we will create this as a singleton class - one one instance of class
+class ProjectState {
+  private listeners: any[] = [];
+  private projects: any[] = [];
+  private static instance: ProjectState;
+
+  private constructor() {}
+  // act as sudo constructor
+  public static getInstance(): ProjectState {
+    if (this.instance) {
+      return this.instance;
+    }
+    this.instance = new ProjectState();
+    return this.instance;
+  }
+
+  public addListener(listenerFn: Function) {
+    this.listeners.push(listenerFn);
+    console.log(this.listeners);
+  }
+
+  public addProject(title: string, description: string, numOfPeople: number) {
+    const newProject = {
+      id: Math.random().toString(),
+      title,
+      description,
+      numOfPeople
+    };
+    this.projects.push(newProject);
+    console.log(this.projects);
+    for (const listenerFn of this.listeners) {
+      // adding slice will return the copy of that array, so it can't be added from the place where the listener functions are coming from
+      // Because arrays and objects are reference values in JS, if we pass the original array we could edit it from outside.
+      listenerFn(this.projects.slice());
+    }
+  }
+}
+
+const projectState = ProjectState.getInstance();
+
 // ProjectList Class
 class ProjectList {
   templateElement: HTMLTemplateElement;
   hostElement: HTMLDivElement;
   element: HTMLElement;
+  assignedProjects: any[] = [];
 
   constructor(private type: "active" | "finished") {
     this.templateElement = document.getElementById(
@@ -87,9 +128,24 @@ class ProjectList {
 
     this.element = template.firstElementChild as HTMLElement;
     this.element.id = `${this.type}-projects`;
-    console.log(this.element);
+    // console.log(this.element);
+    projectState.addListener((projects: any[]) => {
+      this.assignedProjects = projects;
+      this.renderProjects();
+    });
     this.attach();
     this.renderContent();
+  }
+
+  private renderProjects() {
+    const listEl = document.getElementById(
+      `${this.type}-projects-list`
+    )! as HTMLUListElement;
+    for (const projectItem of this.assignedProjects) {
+      const listItem = document.createElement("li");
+      listItem.textContent = projectItem.title;
+      listEl.appendChild(listItem);
+    }
   }
 
   private renderContent() {
@@ -126,7 +182,7 @@ class ProjectInput {
     // const template2 = document.importNode(this.templateElement.content, true);
     this.element = template.firstElementChild as HTMLFormElement;
     this.element.id = "user-input";
-    console.log(this.element);
+    // console.log(this.element);
 
     this.titleInputElement = this.element.querySelector(
       "#title"
@@ -138,8 +194,7 @@ class ProjectInput {
     this.peopleInputElement = this.element.querySelector(
       "#people"
     ) as HTMLInputElement;
-    console.log(this.titleInputElement);
-
+    // console.log(this.titleInputElement);
     this.configure();
     this.attach();
   }
@@ -201,7 +256,8 @@ class ProjectInput {
     // Problem is at runtime we have no way of checking whether it is a tuple
     if (Array.isArray(userInputs)) {
       const [title, desc, people] = userInputs;
-      console.log(title, desc, people);
+      // console.log(title, desc, people);
+      projectState.addProject(title, desc, people);
       this.clearInputs();
     }
   }
@@ -225,4 +281,14 @@ const finishedProjectList = new ProjectList("finished");
  * * We will create another class, which will be responsible for rendering a list of projects
  * * We will split that into two classes, one class for the list, other class per project item in the list
  * * Then we need some way of passing the gathered input to our project list and add a new item to it.
+ * * When we click add project, we create a new project in code, a new data structure which represents a
+ * * project. And then we pass the information about this new project to the active project list we have
+ *
+ * * We want to transfer the information that we have a new project to the project list class
+ * * Because that is that class that is responsible for outputing to screen
+ * * So for that we will set up the subscription pattern.
+ * * Where inside of our project state, we manager a list of functions (listeners), which should be called
+ * * whenever something changes.
+ * * The idea is whenever something changes, like in add project function when we add new project
+ * * We call all the listener function by looping through them
  */
