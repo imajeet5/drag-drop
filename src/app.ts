@@ -70,6 +70,28 @@ function autoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
   return adjDescriptor;
 }
 
+// Drag and Drop Interfaces
+//* We use interface here not just to define the structure of the object as we previously use interfaces
+//* But instead to set up a contract which certain class can sign to force these classes to implement
+//* certain methods, that helps us with drag and drop.
+//* using these interface is optional, but this will allows us to provide some code that forces a class
+//* to implement everything it needs to be drag-able or to a valid drop target
+interface Draggable {
+  dragStartHandler(event: DragEvent): void;
+  dragEndHandler(event: DragEvent): void;
+}
+
+interface DragTarget {
+  // this will signal the browser and JS that the thing you are dragging something over is a valid drag target, if you don't do the right thing in the dragOverHandler dropping will not be possible
+  dragOverHandler(event: DragEvent): void;
+  // We need the drop handler to react to the actual drop that happen
+  // if the dragOverHandler permit the drop the dropHandler will handle the drop
+  dropHandler(event: DragEvent): void;
+  // Is helpful if we are giving some visual feedback to the user, when something is dragged over the box
+  // and revert back the change to ui
+  dragLeaveHandler(event: DragEvent): void;
+}
+
 // Project type
 enum ProjectStatus {
   Active,
@@ -87,14 +109,25 @@ class Project {
 }
 
 // Project State Management, we will create this as a singleton class - one one instance of class
-type RendererFunc = (items: Project[]) => void;
+type RendererFunc<T> = (items: T[]) => void;
 
-class ProjectState {
-  private rendererFunctions: RendererFunc[] = [];
+//Base Project State Class
+class State<T> {
+  protected rendererFunctions: RendererFunc<T>[] = [];
+
+  public addRenderFn(renderFn: RendererFunc<T>) {
+    this.rendererFunctions.push(renderFn);
+    console.log(this.rendererFunctions);
+  }
+}
+
+class ProjectState extends State<Project> {
   private projects: Project[] = [];
   private static instance: ProjectState;
 
-  private constructor() {}
+  private constructor() {
+    super();
+  }
   // act as sudo constructor
   public static getInstance(): ProjectState {
     if (this.instance) {
@@ -102,11 +135,6 @@ class ProjectState {
     }
     this.instance = new ProjectState();
     return this.instance;
-  }
-
-  public addRenderFn(renderFn: RendererFunc) {
-    this.rendererFunctions.push(renderFn);
-    console.log(this.rendererFunctions);
   }
 
   public addProject(title: string, description: string, numOfPeople: number) {
@@ -118,9 +146,20 @@ class ProjectState {
       ProjectStatus.Active
     );
     this.projects.push(newProject);
-    console.log(this.projects);
+    this.reRender();
+
     //* So what happen is, whenever a new project is added, all the renderFunctions will get called
     //* And they will re-render the new project array instead of just rendering the new project
+  }
+
+  moveProject(pid: string, newStatus: ProjectStatus) {
+    const p = this.projects.find(project => project.id === pid);
+    if (p && p.status !== newStatus) {
+      p.status = newStatus;
+      this.reRender();
+    }
+  }
+  private reRender() {
     for (const renderFn of this.rendererFunctions) {
       // adding slice will return the copy of that array, so it can't be added from the place where the listener functions are coming from
       // Because arrays and objects are reference values in JS, if we pass the original array we could edit it from outside.
@@ -131,25 +170,157 @@ class ProjectState {
 
 const projectState = ProjectState.getInstance();
 
-// ProjectList Class
-class ProjectList {
+// Component Base class
+/***
+ * * We can think of these classes as UI components, which we render to the screen, and every component is
+ * * in the end a renderable object which has some functionalities that allows us to render it.
+ * * Then the concrete instances or the inherited classes add extra functionality which that specific
+ * * component needs
+ * * We don't know that type element is going to be, so we overcame this by not just using
+ * * inheritance but by using a generic class here, i.e. type is set dynamically
+ * * where when we inherit from it we can set the concrete types
+ * * Now when we inherit from this class, we can specify the concrete types, so that we can work with
+ * * different types in different places where we inherit
+ * * We need to know the id of the template so that we know how to select it
+ * * We need to know that host element id, so that we know where to render this component
+ * * We also get newElement id so that we get an id that has to be assigned to the newly rendered element
+ * * we also mark this class as Abstract class, so that we can't directly instantiate it instead
+ * * it should always be used for inheritance
+ * * we also add config method and renderContent() method, which means concrete implelemention will not be
+ * * be there be we force any class inheriting from Component class to add these two methods and have them
+ * * available
+ * * This class will just render the given template at the given position.
+ */
+abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   templateElement: HTMLTemplateElement;
-  hostElement: HTMLDivElement;
-  element: HTMLElement;
+  hostElement: T;
+  element: U;
+  constructor(
+    templateId: string,
+    hostElementId: string,
+    insertAtStart: boolean,
+    newElementId?: string
+  ) {
+    this.templateElement = document.getElementById(
+      templateId
+    )! as HTMLTemplateElement;
+
+    this.hostElement = document.getElementById(hostElementId)! as T;
+    const template = document.importNode(this.templateElement.content, true);
+    this.element = template.firstElementChild as U;
+
+    if (newElementId) this.element.id = newElementId;
+
+    this.attach(insertAtStart);
+  }
+  private attach(insertAtStr: boolean) {
+    this.hostElement.insertAdjacentElement(
+      insertAtStr ? "afterbegin" : "beforeend",
+      this.element
+    );
+  }
+  abstract configure(): void;
+  abstract renderContent(): void;
+}
+
+/************************************************************************** */
+
+// ProjectItem Class - this will be the class responsible for rendering a single project item
+class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>
+  implements Draggable {
+  // it would also make sense, to store the projects that belongs to this project item
+  private project: Project;
+
+  get persons() {
+    if (this.project.people === 1) {
+      return "1 person";
+    } else {
+      return `${this.project.people} persons`;
+    }
+  }
+
+  constructor(hostId: string, project: Project) {
+    super("single-project", hostId, false, project.id);
+    this.project = project;
+
+    console.log(this.element);
+    this.configure();
+    this.renderContent();
+  }
+
+  renderContent() {
+    this.element.querySelector("h2")!.textContent = this.project.title;
+    this.element.querySelector("h3")!.textContent = this.persons + " assigned";
+    this.element.querySelector("p")!.textContent = this.project.description;
+  }
+  configure() {
+    this.element.addEventListener("dragstart", this.dragStartHandler);
+    this.element.addEventListener("dragend", this.dragEndHandler);
+  }
+
+  @autoBind
+  dragStartHandler(event: DragEvent) {
+    event.dataTransfer!.setData("text/plain", this.project.id);
+    event.dataTransfer!.effectAllowed = "move";
+  }
+
+  @autoBind
+  dragEndHandler(_: DragEvent) {
+    console.log("<--------Drag End ----->");
+  }
+}
+
+/********************************************************************************* */
+
+// ProjectList Class - Active Project and Finished Projects
+class ProjectList extends Component<HTMLDivElement, HTMLElement>
+  implements DragTarget {
   assignedProjects: Project[] = [];
 
   constructor(private type: "active" | "finished") {
-    this.templateElement = document.getElementById(
-      "project-list"
-    )! as HTMLTemplateElement;
+    super("project-list", "app", false, `${type}-projects`);
 
-    this.hostElement = document.getElementById("app")! as HTMLDivElement;
-
-    const template = document.importNode(this.templateElement.content, true);
-
-    this.element = template.firstElementChild as HTMLElement;
     this.element.id = `${this.type}-projects`;
-    // console.log(this.element);
+
+    //Configure the render functions
+    this.configure();
+    this.renderContent();
+  }
+
+  @autoBind
+  dragOverHandler(event: DragEvent) {
+    if (event.dataTransfer && event.dataTransfer.types[0] === "text/plain") {
+      // Prevent default to tell JS browser, that for this element we want to allow a drop
+      // If we dont preventDefault the drop will not take place
+      event.preventDefault();
+      const listEl = this.element.querySelector("ul")!;
+      listEl.classList.add("droppable");
+      // console.log("<-------Hovering----------->");
+    }
+  }
+
+  @autoBind
+  dropHandler(event: DragEvent) {
+    console.log("<--------Dropped ------------->");
+    const pid = event.dataTransfer!.getData("text/plain");
+    projectState.moveProject(
+      pid,
+      this.type === "active" ? ProjectStatus.Active : ProjectStatus.Finished
+    );
+  }
+
+  @autoBind
+  dragLeaveHandler(_: DragEvent) {
+    const listEl = this.element.querySelector("ul")!;
+    listEl.classList.remove("droppable");
+    console.log("dragLeaveHandler executed");
+  }
+
+  configure() {
+    this.element.addEventListener("dragover", this.dragOverHandler);
+    this.element.addEventListener("dragleave", this.dragLeaveHandler);
+    this.element.addEventListener("drop", this.dropHandler);
+
     // we are not rendering here, but we adding the renderer of this instance to the global renderer
     // this function will not get call here but in the addProject function in ProjectState Class
     // so whenever we add a new project, these rendered will get called
@@ -165,8 +336,13 @@ class ProjectList {
       this.assignedProjects = relevantProjects;
       this.renderProjects();
     });
-    this.attach();
-    this.renderContent();
+  }
+
+  renderContent() {
+    const listId = `${this.type}-projects-list`;
+    this.element.querySelector("ul")!.id = listId;
+    this.element.querySelector("h2")!.textContent =
+      this.type.toUpperCase() + " PROJECTS";
   }
 
   // the best possible solution here would be to kind of run some comparison, to check what has already
@@ -177,61 +353,54 @@ class ProjectList {
     )! as HTMLUListElement;
     listEl.innerHTML = "";
     for (const projectItem of this.assignedProjects) {
-      const listItem = document.createElement("li");
-      listItem.textContent = projectItem.title;
-      listEl.appendChild(listItem);
+      new ProjectItem(`${this.type}-projects-list`, projectItem);
+      // const listItem = document.createElement("li");
+      // listItem.textContent = projectItem.title;
+      // listEl.appendChild(listItem);
     }
-  }
-
-  private renderContent() {
-    const listId = `${this.type}-projects-list`;
-    this.element.querySelector("ul")!.id = listId;
-    this.element.querySelector("h2")!.textContent =
-      this.type.toUpperCase() + " PROJECTS";
-  }
-
-  private attach() {
-    this.hostElement.insertAdjacentElement("beforeend", this.element);
   }
 }
 
+/****************************************************************************** */
+
 // Project Input Class
-class ProjectInput {
-  templateElement: HTMLTemplateElement;
-  hostElement: HTMLDivElement;
-  element: HTMLFormElement;
-  // element2: HTMLFormElement;
+class ProjectInput extends Component<HTMLDivElement, HTMLFormElement> {
   titleInputElement: HTMLInputElement;
   descriptionInputElement: HTMLTextAreaElement;
   peopleInputElement: HTMLInputElement;
 
   constructor() {
-    this.templateElement = document.getElementById(
-      "project-input"
-    )! as HTMLTemplateElement;
-
-    this.hostElement = document.getElementById("app")! as HTMLDivElement;
-    // we get document fragment by this not the HTML element
-    // Here we are importing the HTML template from the document
-    const template = document.importNode(this.templateElement.content, true);
-    // const template2 = document.importNode(this.templateElement.content, true);
-    this.element = template.firstElementChild as HTMLFormElement;
-    this.element.id = "user-input";
-    // console.log(this.element);
-
+    super("project-input", "app", true, "user-input");
     this.titleInputElement = this.element.querySelector(
       "#title"
     ) as HTMLInputElement;
-
     this.descriptionInputElement = this.element.querySelector(
       "#description"
     ) as HTMLTextAreaElement;
     this.peopleInputElement = this.element.querySelector(
       "#people"
     ) as HTMLInputElement;
-    // console.log(this.titleInputElement);
+
     this.configure();
-    this.attach();
+  }
+
+  configure() {
+    this.element.addEventListener("submit", this.submitHandler);
+  }
+
+  renderContent() {}
+
+  @autoBind
+  private submitHandler(event: Event) {
+    event.preventDefault();
+    const userInputs = this.gatherUserInput();
+    // Problem is at runtime we have no way of checking whether it is a tuple
+    if (Array.isArray(userInputs)) {
+      const [title, desc, people] = userInputs;
+      // console.log(title, desc, people);
+      projectState.addProject(title, desc, people);
+      this.clearInputs();
+    }
   }
 
   private gatherUserInput(): [string, string, number] | void {
@@ -265,17 +434,6 @@ class ProjectInput {
     } else {
       return [enteredTitle, enteredDescription, +enteredPeople];
     }
-
-    // if (
-    //   enteredTitle.trim().length === 0 ||
-    //   enteredDescription.trim().length === 0 ||
-    //   enteredPeople.trim().length === 0
-    // ) {
-    //   alert("Invalid input please try again!");
-    //   return;
-    // } else {
-    //   return [enteredTitle, enteredDescription, +enteredPeople];
-    // }
   }
 
   private clearInputs() {
@@ -283,31 +441,13 @@ class ProjectInput {
     this.descriptionInputElement.value = "";
     this.peopleInputElement.value = "";
   }
-
-  @autoBind
-  private submitHandler(event: Event) {
-    event.preventDefault();
-    const userInputs = this.gatherUserInput();
-    // Problem is at runtime we have no way of checking whether it is a tuple
-    if (Array.isArray(userInputs)) {
-      const [title, desc, people] = userInputs;
-      // console.log(title, desc, people);
-      projectState.addProject(title, desc, people);
-      this.clearInputs();
-    }
-  }
-
-  private configure() {
-    this.element.addEventListener("submit", this.submitHandler);
-  }
-
-  private attach() {
-    this.hostElement.insertAdjacentElement("afterbegin", this.element);
-  }
 }
 
+// this will create the input form
 const projectInput = new ProjectInput();
+// this will create the active section of the projects
 const activeProjectList = new ProjectList("active");
+// this will create the finished section of the projects
 const finishedProjectList = new ProjectList("finished");
 
 // projInp.getInputValues()
@@ -326,4 +466,8 @@ const finishedProjectList = new ProjectList("finished");
  * * whenever something changes.
  * * The idea is whenever something changes, like in add project function when we add new project
  * * We call all the listener function by looping through them
+ */
+
+/****
+ * * we will add a base class, which will have template element, host element, element
  */
