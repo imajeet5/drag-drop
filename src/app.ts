@@ -70,10 +70,28 @@ function autoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
   return adjDescriptor;
 }
 
+// Project type
+enum ProjectStatus {
+  Active,
+  Finished
+}
+
+class Project {
+  constructor(
+    public id: string,
+    public title: string,
+    public description: string,
+    public people: number,
+    public status: ProjectStatus
+  ) {}
+}
+
 // Project State Management, we will create this as a singleton class - one one instance of class
+type RendererFunc = (items: Project[]) => void;
+
 class ProjectState {
-  private listeners: any[] = [];
-  private projects: any[] = [];
+  private rendererFunctions: RendererFunc[] = [];
+  private projects: Project[] = [];
   private static instance: ProjectState;
 
   private constructor() {}
@@ -86,24 +104,27 @@ class ProjectState {
     return this.instance;
   }
 
-  public addListener(listenerFn: Function) {
-    this.listeners.push(listenerFn);
-    console.log(this.listeners);
+  public addRenderFn(renderFn: RendererFunc) {
+    this.rendererFunctions.push(renderFn);
+    console.log(this.rendererFunctions);
   }
 
   public addProject(title: string, description: string, numOfPeople: number) {
-    const newProject = {
-      id: Math.random().toString(),
+    const newProject = new Project(
+      Math.random().toString(),
       title,
       description,
-      numOfPeople
-    };
+      numOfPeople,
+      ProjectStatus.Active
+    );
     this.projects.push(newProject);
     console.log(this.projects);
-    for (const listenerFn of this.listeners) {
+    //* So what happen is, whenever a new project is added, all the renderFunctions will get called
+    //* And they will re-render the new project array instead of just rendering the new project
+    for (const renderFn of this.rendererFunctions) {
       // adding slice will return the copy of that array, so it can't be added from the place where the listener functions are coming from
       // Because arrays and objects are reference values in JS, if we pass the original array we could edit it from outside.
-      listenerFn(this.projects.slice());
+      renderFn(this.projects.slice());
     }
   }
 }
@@ -115,7 +136,7 @@ class ProjectList {
   templateElement: HTMLTemplateElement;
   hostElement: HTMLDivElement;
   element: HTMLElement;
-  assignedProjects: any[] = [];
+  assignedProjects: Project[] = [];
 
   constructor(private type: "active" | "finished") {
     this.templateElement = document.getElementById(
@@ -129,18 +150,32 @@ class ProjectList {
     this.element = template.firstElementChild as HTMLElement;
     this.element.id = `${this.type}-projects`;
     // console.log(this.element);
-    projectState.addListener((projects: any[]) => {
-      this.assignedProjects = projects;
+    // we are not rendering here, but we adding the renderer of this instance to the global renderer
+    // this function will not get call here but in the addProject function in ProjectState Class
+    // so whenever we add a new project, these rendered will get called
+    projectState.addRenderFn((projects: Project[]) => {
+      const relevantProjects = projects.filter(p => {
+        // if this instance is of type active then filter our all the active project for render
+        if (this.type === "active") {
+          return p.status === ProjectStatus.Active;
+        }
+        // if this instance is of type finished then filter out all the finished projects
+        return p.status === ProjectStatus.Finished;
+      });
+      this.assignedProjects = relevantProjects;
       this.renderProjects();
     });
     this.attach();
     this.renderContent();
   }
 
+  // the best possible solution here would be to kind of run some comparison, to check what has already
+  // been render and what we nee to render to avoid unnecessary re-rendering
   private renderProjects() {
     const listEl = document.getElementById(
       `${this.type}-projects-list`
     )! as HTMLUListElement;
+    listEl.innerHTML = "";
     for (const projectItem of this.assignedProjects) {
       const listItem = document.createElement("li");
       listItem.textContent = projectItem.title;
