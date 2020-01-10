@@ -76,6 +76,7 @@ function autoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
 //* certain methods, that helps us with drag and drop.
 //* using these interface is optional, but this will allows us to provide some code that forces a class
 //* to implement everything it needs to be drag-able or to a valid drop target
+
 interface Draggable {
   dragStartHandler(event: DragEvent): void;
   dragEndHandler(event: DragEvent): void;
@@ -91,6 +92,8 @@ interface DragTarget {
   // and revert back the change to ui
   dragLeaveHandler(event: DragEvent): void;
 }
+
+/// <reference path="drag-drop-interfaces.ts"/>
 
 // Project type
 enum ProjectStatus {
@@ -243,7 +246,6 @@ class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>
     super("single-project", hostId, false, project.id);
     this.project = project;
 
-    console.log(this.element);
     this.configure();
     this.renderContent();
   }
@@ -279,7 +281,7 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement>
 
   constructor(private type: "active" | "finished") {
     super("project-list", "app", false, `${type}-projects`);
-
+    //? I think we are repeating this code as it is also in super.
     this.element.id = `${this.type}-projects`;
 
     //Configure the render functions
@@ -363,7 +365,7 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement>
 
 /****************************************************************************** */
 
-// Project Input Class
+// Project Input Class -- Input Form
 class ProjectInput extends Component<HTMLDivElement, HTMLFormElement> {
   titleInputElement: HTMLInputElement;
   descriptionInputElement: HTMLTextAreaElement;
@@ -444,11 +446,11 @@ class ProjectInput extends Component<HTMLDivElement, HTMLFormElement> {
 }
 
 // this will create the input form
-const projectInput = new ProjectInput();
+new ProjectInput();
 // this will create the active section of the projects
-const activeProjectList = new ProjectList("active");
+new ProjectList("active");
 // this will create the finished section of the projects
-const finishedProjectList = new ProjectList("finished");
+new ProjectList("finished");
 
 // projInp.getInputValues()
 
